@@ -4,11 +4,10 @@
   "version": "${version}",
   "name": "QuickTeleports",
   "description": "This mod adds a quick and easy way to send tp requests with /tpa and /tpaccept",
-  "authors": ["itsmeowdev"],
+  "authors": ["itsmeowdev", "MikeStorm03"],
   "contact": {
-    "homepage": "https://www.curseforge.com/minecraft/mc-mods/quickteleports",
-    "sources": "https://github.com/itsmeow/QuickTeleports",
-    "issues": "https://github.com/itsmeow/QuickTeleports/issues"
+    "sources": "https://github.com/MikeStorm03/QuickTeleports",
+    "issues": "https://github.com/MikeStorm03/QuickTeleports/issues"
   },
   "license": "MIT",
   "icon": "quickteleports.png",
