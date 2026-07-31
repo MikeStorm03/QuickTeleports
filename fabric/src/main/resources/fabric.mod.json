@@ -1,31 +1,39 @@
 {
-  "schemaVersion": 1,
-  "id": "quickteleports",
-  "version": "${version}",
-  "name": "QuickTeleports",
-  "description": "This mod adds a quick and easy way to send tp requests with /tpa and /tpaccept",
-  "authors": ["itsmeowdev", "MikeStorm03"],
-  "contact": {
-    "sources": "https://github.com/MikeStorm03/QuickTeleports",
-    "issues": "https://github.com/MikeStorm03/QuickTeleports/issues"
+    "schemaVersion": 1,
+    "id": "${mod_id}",
+    "version": "${version}",
+    "name": "${mod_name}",
+    "description": "${description}",
+    "authors": [
+        "itsmeowdev",
+        "${mod_author}"
+    ],
+    "contact": {
+      "sources": "https://github.com/MikeStorm03/QuickTeleports",
+      "issues": "https://github.com/MikeStorm03/QuickTeleports/issues"
   },
-  "license": "MIT",
-  "icon": "quickteleports.png",
-  "environment": "*",
-  "entrypoints": {
-    "main": ["dev.itsmeow.quickteleports.QuickTeleportsModFabric"]
-  },
-  "depends": {
-    "minecraft": "1.16.5",
-    "fabricloader": ">=0.12.0",
-    "fabric": ">=0.32.0"
-  },
-  "mixins": [],
+    "license": "${license}",
+    "icon": "${mod_id}.png",
+    "environment": "*",
+    "entrypoints": {
+        "main": [
+            "dev.itsmeow.quickteleports.QuickTeleportsModFabric"
+        ]
+    },
+    "mixins": [
+    ],
+    "depends": {
+        "fabricloader": ">=${fabric_loader_version}",
+        "fabric-api": "*",
+        "minecraft": "~${minecraft_version}",
+        "java": ">=${java_version}"
+    },
   "custom": {
     "modmenu": {
       "links": {
-        "modmenu.discord": "https://discord.itsmeow.dev/"
+        "modmenu.discord": "https://discord.gg/9mgdeXJdsx"
       }
     }
   }
 }
+  

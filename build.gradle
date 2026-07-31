@@ -1,12 +1,13 @@
 plugins {
-    id "architectury-plugin" version "$architectury_plugin_version"
-    id "dev.architectury.loom" version "$loom_version" apply false
+    // see https://fabricmc.net/develop/ for new versions
+    id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT' apply false
+    // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
+    id 'net.neoforged.moddev' version '2.0.143' apply false
 }
 subprojects {
-    apply plugin: "dev.architectury.loom"
+    repositories {
+        maven {
+            url = "https://api.modrinth.com/maven"
+        }
+    }
 }
-allprojects {
-    apply plugin: "architectury-plugin"
-}
-apply from: 'https://maven.itsmeow.dev/scripts/architectury-base.gradle'
-apply from: 'https://maven.itsmeow.dev/scripts/architectury-alphas.gradle'

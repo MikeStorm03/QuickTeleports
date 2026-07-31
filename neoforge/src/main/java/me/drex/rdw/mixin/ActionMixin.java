@@ -1,0 +1,81 @@
+package me.drex.rdw.mixin;
+
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import net.fabricmc.fabric.api.networking.v1.context.PacketContext;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.server.dialog.Dialog;
+import net.minecraft.server.dialog.Input;
+import net.minecraft.server.dialog.action.*;
+import net.minecraft.server.dialog.input.BooleanInput;
+import net.minecraft.server.dialog.input.InputControl;
+import net.minecraft.server.dialog.input.TextInput;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+
+import java.util.Optional;
+import java.util.function.Function;
+
+import static me.drex.rdw.RemoveDialogWarning.*;
+
+@Mixin(Action.class)
+public interface ActionMixin {
+    @WrapOperation(
+        method = "<clinit>",
+        at = @At(
+            value = "INVOKE",
+            target = "Lcom/mojang/serialization/Codec;dispatch(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;"
+        )
+    )
+    private static <A> Codec<Action> customCodec(
+        Codec<Action> instance,
+        Function<Action, ? extends A> type,
+        Function<? super A, ? extends MapCodec<Action>> codec,
+        Operation<Codec<Action>> original
+    ) {
+        return original.call(instance, type, codec).xmap(Function.identity(), action -> {
+            PacketContext packetContext = PacketContext.get();
+            if (packetContext != null && packetContext.get(PacketContext.CONNECTION) != null) {
+                if (action instanceof CommandTemplate(ParsedTemplate template)) {
+                    ParsedTemplateAccessor accessor = (ParsedTemplateAccessor) template;
+                    CompoundTag tag = new CompoundTag();
+                    tag.putString(COMMAND_KEY, accessor.getRaw());
+                    tag.putBoolean(DYNAMIC_KEY, true);
+                    Dialog dialog = DIALOG_SCOPE.get();
+
+                    CompoundTag booleanInputs = new CompoundTag();
+                    ListTag textInputs = new ListTag();
+                    for (Input input : dialog.common().inputs()) {
+                        InputControl control = input.control();
+                        switch (control) {
+                            case BooleanInput booleanInput -> {
+                                CompoundTag booleanTag = new CompoundTag();
+                                booleanTag.putString("true", booleanInput.onTrue());
+                                booleanTag.putString("false", booleanInput.onFalse());
+                                booleanInputs.put(input.key(), booleanTag);
+                            }
+                            case TextInput _ -> textInputs.add(StringTag.valueOf(input.key()));
+                            default -> {}
+                        }
+                    }
+                    tag.put(BOOLEAN_TAGS_KEY, booleanInputs);
+                    tag.put(STRING_INPUT_KEY, textInputs);
+
+                    return new CustomAll(DIALOG_ACTION_ID, Optional.of(tag));
+                } else if (action instanceof StaticAction(ClickEvent value)) {
+                    if (value instanceof ClickEvent.RunCommand(String command)) {
+                        CompoundTag tag = new CompoundTag();
+                        tag.putString(COMMAND_KEY, command);
+                        return new CustomAll(DIALOG_ACTION_ID, Optional.of(tag));
+                    }
+                }
+            }
+            return action;
+        });
+    }
+}

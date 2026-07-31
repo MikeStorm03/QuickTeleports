@@ -1,130 +1,112 @@
 package dev.itsmeow.quickteleports;
 
-import com.mojang.authlib.GameProfile;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import com.mojang.brigadier.CommandDispatcher;
-import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import dev.architectury.injectables.annotations.ExpectPlatform;
-import dev.itsmeow.quickteleports.memory.PlayerData;
-import dev.itsmeow.quickteleports.memory.PreviousPosition;
-import dev.itsmeow.quickteleports.memory.TeleportRequest;
-import dev.itsmeow.quickteleports.util.HereTeleport;
+import com.msg.quickteleports.ForkedAtCommon;
+import com.msg.quickteleports.memory.PlayerData;
+import com.msg.quickteleports.memory.PreviousPosition;
+import com.msg.quickteleports.memory.TeleportRequest;
+import com.msg.quickteleports.platform.Services;
+import com.msg.quickteleports.util.TextFormatting;
+
 import dev.itsmeow.quickteleports.util.Teleport;
 import dev.itsmeow.quickteleports.util.ToTeleport;
-import net.minecraft.ChatFormatting;
+
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.GameProfileArgument;
-import net.minecraft.network.chat.ClickEvent;
-import net.minecraft.network.chat.Style;
-import net.minecraft.network.chat.TextComponent;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.NameAndId;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.Predicate;
 
 public class QuickTeleportsMod {
 
-    public static final String MOD_ID = "quickteleports";
-    public static final String CONFIG_FIELD_NAME = "teleport_request_timeout";
-    public static final String CONFIG_FIELD_COMMENT = "Timeout until a teleport request expires, in seconds.";
-    public static final int CONFIG_FIELD_VALUE = 30;
-    public static final int CONFIG_FIELD_MIN = 0;
-    public static final int CONFIG_FIELD_MAX = Integer.MAX_VALUE;
-
-	public static final Logger LOGGER = LogManager.getLogger(MOD_ID);
-
-    public static HashMap<ServerPlayer, Queue<TeleportRequest>> tps = new HashMap<>();
-
-    public static class FTC extends TextComponent {
-
-        public FTC(ChatFormatting color, String msg) {
-            super(msg);
-            this.setStyle(Style.EMPTY.withColor(color));
-        }
-
-    
-    }
-    public static class Button extends TextComponent {
-
-        public Button(String msg, String command) {
-            super(msg);
-            this.setStyle(Style.EMPTY.withColor(ChatFormatting.RED).withBold(true).withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command)));
-        }
-
-    }
-
-    public static void registerCommands(CommandDispatcher dispatcher) {
-        Predicate<CommandSourceStack> isPlayer = source -> {
-            try {
-                return source.getPlayerOrException() != null;
-            } catch(CommandSyntaxException e) {
-                return false;
-            }
-        };
+    public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         // tpa
-        dispatcher.register(Commands.literal("tpa").requires(isPlayer).then(Commands.argument("target", GameProfileArgument.gameProfile()).executes(command -> {
-            ServerPlayer player = command.getSource().getPlayerOrException();
-            MinecraftServer server = player.getServer();
-            Collection<GameProfile> profiles = GameProfileArgument.getGameProfiles(command, "target");
+        dispatcher.register(Commands.literal("tpa").requires(source -> source.isPlayer()).then(Commands.argument("target", GameProfileArgument.gameProfile()).executes(command -> {
+            CommandSourceStack sourceStack = command.getSource();
+            ServerPlayer player = sourceStack.getPlayerOrException();
+            MinecraftServer server = player.level().getServer();
+            Collection<NameAndId> profiles = GameProfileArgument.getGameProfiles(command, "target");
+
             if(profiles.size() > 1) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Chỉ gửi đến một đứa thôi!"));
+                sourceStack.sendFailure(TextFormatting.shortText("Chỉ gửi đến một đứa thôi!", TextFormatting.red()));
                 return 0;
             }
-            GameProfile profile = getFirstProfile(profiles);
+            NameAndId profile = getFirstProfile(profiles);
             if(!isGameProfileOnline(server, profile)) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Nó offline rồi!"));
+                sourceStack.sendFailure(TextFormatting.shortText("Nó offline rồi!", TextFormatting.red()));
                 return 0;
             }
-            if(profile.getId().equals(player.getGameProfile().getId())) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Không dịch chuyển đến chỗ mình được đâu!"));
+            if(profile.id().equals(player.getGameProfile().id())) {
+                sourceStack.sendFailure(TextFormatting.shortText("Không dịch chuyển đến chỗ bản thân được đâu!", TextFormatting.red()));
                 return 0;
             }
             String sourceName = player.getName().getString();
-            ServerPlayer targetPlayer = server.getPlayerList().getPlayer(profile.getId());
+            ServerPlayer targetPlayer = server.getPlayerList().getPlayer(profile.id());
+        
 
-            Queue<TeleportRequest> queue = tps.computeIfAbsent(targetPlayer, k -> new ConcurrentLinkedQueue<>());
+            Queue<TeleportRequest> queue = ForkedAtCommon.tps.computeIfAbsent(targetPlayer, k -> new ConcurrentLinkedQueue<>());
             boolean exists = queue.stream().anyMatch(req -> req.getTeleport().getRequester().equals(sourceName));
             if(!exists) {
                 ToTeleport teleport = new ToTeleport(sourceName, targetPlayer.getName().getString());
                 queue.add(new TeleportRequest(teleport, getTeleportTimeout() * 20));
             } else {
-                sendMessage(player.createCommandSourceStack(), false, new FTC(ChatFormatting.RED, "You already have a pending request to this player!"));
+                sourceStack.sendFailure(TextFormatting.shortText("Bro gửi yêu cầu dịch chuyển rồi!", TextFormatting.red()));
                 return 0;
             }
-            
-            sendMessage(targetPlayer.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, sourceName),
-                        new FTC(ChatFormatting.GOLD, " has requested to teleport to you. Type "), new FTC(ChatFormatting.YELLOW, "/tpaccept"),
-                        new FTC(ChatFormatting.GOLD, " to accept or "), new FTC(ChatFormatting.YELLOW, "/tpadeny"), new FTC(ChatFormatting.GOLD, " to deny.\n"),
-                        new Button("ACCEPT", "/tpaccept"), new FTC(ChatFormatting.WHITE, " || "), new Button("DENY", "/tpadeny"));
-            sendMessage(command.getSource(), true, new FTC(ChatFormatting.GOLD, "Requested to teleport to "), new FTC(ChatFormatting.GREEN, targetPlayer.getName().getString()), new FTC(ChatFormatting.GOLD, "."));
+
+            targetPlayer.createCommandSourceStack().sendSuccess(
+                // style -> style.withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, "say Hello!"))
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                                    sourceName, TextFormatting.green(),
+                                                    " muốn dịch chuyển đến chỗ bạn. Nhập ", TextFormatting.gold(),
+                                                    "/tpaccept", TextFormatting.yellow(),
+                                                    " để đồng ý hoặc ", TextFormatting.gold(),
+                                                    "/tpadeny", TextFormatting.yellow(),
+                                                    " để từ chối.\n", TextFormatting.gold(),
+                                                    "ACCEPT", TextFormatting.button("tpaccept " + player.getPlainTextName()),
+                                                    " || ", TextFormatting.white(),
+                                                    "DENY", TextFormatting.button("tpadeny " + player.getPlainTextName()))
+                    )), false);
+
+            sourceStack.sendSuccess(
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                            "Yêu cầu dịch chuyển đã được gửi đến ", TextFormatting.gold(),
+                                                targetPlayer.getPlainTextName(), TextFormatting.green(),
+                                                ".", TextFormatting.gold()
+                    ))), false);
             return 1;
         })));
 
         // tpaccept
-        dispatcher.register(Commands.literal("tpaccept").requires(isPlayer).executes(command -> {
-            ServerPlayer player = command.getSource().getPlayerOrException();
-            MinecraftServer server = player.getServer();
-            Teleport tp = QuickTeleportsMod.getSubjectTP(player).getTeleport();
+        dispatcher.register(Commands.literal("tpaccept").requires(source -> source.isPlayer()).executes(command -> {
+            CommandSourceStack sourceStack = command.getSource();
+            ServerPlayer player = sourceStack.getPlayerOrException();
+            MinecraftServer server = player.level().getServer();
 
-            if(tp == null) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "You have no pending teleport requests!"));
+            TeleportRequest req =  QuickTeleportsMod.getSubjectTP(player);
+            if(req == null) {
+                sourceStack.sendFailure(TextFormatting.shortText("Bạn hiện không có yêu cầu dịch chuyển nào.", TextFormatting.red()));
                 return 0;
             }
 
+            Teleport tp = req.getTeleport();
             ServerPlayer playerRequesting = server.getPlayerList().getPlayerByName(tp.getRequester());
             ServerPlayer playerMoving = server.getPlayerList().getPlayerByName(tp.getSubject());
 
             if(playerMoving == null) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "The player that is teleporting no longer exists!"));
+                sourceStack.sendFailure(TextFormatting.shortText("The player that is teleporting no longer exists!", TextFormatting.red()));
                 return 0;
             }
 
@@ -134,28 +116,38 @@ public class QuickTeleportsMod {
                 playerRequesting = holder;
             }
 
-            sendMessage(playerRequesting.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, "Teleport request accepted."));
-            sendMessage(playerMoving.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, (tp instanceof ToTeleport ? "Your teleport request has been accepted." : "You are now being teleported.")));
+            playerRequesting.createCommandSourceStack().sendSuccess(() -> TextFormatting.shortText("Yêu cầu dịch chuyển đã được đồng ý.", TextFormatting.green()), false);
+            playerMoving.createCommandSourceStack().sendSuccess(() -> TextFormatting.shortText(tp instanceof ToTeleport ?
+                                                                                "Yêu cầu dịch chuyển của bạn đã được đồng ý." :
+                                                                                "Bạn đang được dịch chuyển.", TextFormatting.green()), false);
 
-            double posX = playerRequesting.getX();
-            double posY = playerRequesting.getY();
-            double posZ = playerRequesting.getZ();
-            PlayerData.setPreviousPosition(playerMoving, new PreviousPosition(playerMoving.getX(), playerMoving.getY(), playerMoving.getZ(), playerMoving.getLevel().dimension()));
-            playerMoving.teleportTo(playerRequesting.getLevel(), posX, posY, posZ, playerRequesting.yRot, 0F);
+            PlayerData.setPreviousPosition(playerMoving,
+                                        new PreviousPosition(playerMoving.getX(),
+                                                            playerMoving.getY(),
+                                                            playerMoving.getZ(),
+                                                            playerMoving.level().dimension()));
+            playerMoving.teleportTo(playerRequesting.level(),
+                                    playerRequesting.getX(),
+                                    playerRequesting.getY(),
+                                    playerRequesting.getZ(),
+                                    Set.of(),
+                                    playerRequesting.getYRot(),
+                                    playerRequesting.getXRot(),
+                                    true);
             return 1;
 
         }).then(Commands.argument("target", GameProfileArgument.gameProfile()).executes(command -> {
             ServerPlayer player = command.getSource().getPlayerOrException();
-            MinecraftServer server = player.getServer();
+            MinecraftServer server = player.level().getServer();
         
-            Collection<GameProfile> profiles = GameProfileArgument.getGameProfiles(command, "target");    
-            GameProfile profile = getFirstProfile(profiles);
+            Collection<NameAndId> profiles = GameProfileArgument.getGameProfiles(command, "target");    
+            NameAndId profile = getFirstProfile(profiles);
             if(!isGameProfileOnline(server, profile)) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Nó offline rồi!"));
+                command.getSource().sendFailure(TextFormatting.shortText("Nó offline rồi!", TextFormatting.red()));
                 return 0;
             }
 
-            ServerPlayer targetPlayer = server.getPlayerList().getPlayer(profile.getId());
+            ServerPlayer targetPlayer = server.getPlayerList().getPlayer(profile.id());
             TeleportRequest request = QuickTeleportsMod.getSubjectTP(player, targetPlayer);
 
             Teleport tp = request.getTeleport();
@@ -169,108 +161,68 @@ public class QuickTeleportsMod {
                 playerRequesting = holder;
             }
 
-            sendMessage(playerRequesting.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, "Teleport request accepted."));
-            sendMessage(playerMoving.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, (tp instanceof ToTeleport ? "Your teleport request has been accepted." : "You are now being teleported.")));
+            playerRequesting.createCommandSourceStack().sendSuccess(() -> TextFormatting.shortText("Yêu cầu dịch chuyển đã được đồng ý.", TextFormatting.green()), false);
+            playerMoving.createCommandSourceStack().sendSuccess(() -> TextFormatting.shortText(tp instanceof ToTeleport ?
+                                                                                            "Yêu cầu dịch chuyển đã được đồng ý" :
+                                                                                            "Bạn đang được dịch chuyển.", TextFormatting.green())
+                                                                , false);
 
-            double posX = playerRequesting.getX();
-            double posY = playerRequesting.getY();
-            double posZ = playerRequesting.getZ();
-            PlayerData.setPreviousPosition(playerMoving, new PreviousPosition(playerMoving.getX(), playerMoving.getY(), playerMoving.getZ(), playerMoving.getLevel().dimension()));
-            playerMoving.teleportTo(playerRequesting.getLevel(), posX, posY, posZ, playerRequesting.yRot, 0F);
+            PlayerData.setPreviousPosition(playerMoving, new PreviousPosition(playerMoving.getX(), playerMoving.getY(), playerMoving.getZ(), playerMoving.level().dimension()));
+            playerMoving.teleportTo(playerRequesting.level(),
+                                    playerRequesting.getX(),
+                                    playerRequesting.getY(),
+                                    playerRequesting.getZ(),
+                                    Set.of(),
+                                    playerRequesting.getYRot(),
+                                    playerRequesting.getXRot(),
+                                    true);
             return 1;
         })));
 
         // tpadeny
-        dispatcher.register(Commands.literal("tpadeny").requires(isPlayer).executes(command -> {
+        dispatcher.register(Commands.literal("tpadeny").requires(source -> source.isPlayer()).executes(command -> {
             ServerPlayer player = command.getSource().getPlayerOrException();
+
             TeleportRequest req = QuickTeleportsMod.getSubjectTP(player);
             if(req == null) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "You have no pending teleport requests!"));
+                command.getSource().sendFailure(TextFormatting.shortText("Bạn không có bất kỳ yêu cầu dịch chuyển nào!", TextFormatting.red()));
                 return 0;
             }
-            Teleport tp = req.getTeleport();
-            notifyCanceledTP(player.getServer(), tp);
+
+            notifyCanceledTP(player.level().getServer(), req.getTeleport());
             return 1;
+
         }).then(Commands.argument("target", GameProfileArgument.gameProfile()).executes(command -> {
+
             ServerPlayer player = command.getSource().getPlayerOrException();
-            ServerPlayer targetPlayer = player.getServer().getPlayerList().getPlayer(getFirstProfile(GameProfileArgument.getGameProfiles(command, "target")).getId());
+            ServerPlayer targetPlayer = player.level().getServer().getPlayerList().getPlayer(getFirstProfile(GameProfileArgument.getGameProfiles(command, "target")).id());
+
             TeleportRequest req = QuickTeleportsMod.getSubjectTP(player, targetPlayer);
             if(req == null) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "You have no pending teleport requests from that player!"));
+                command.getSource().sendFailure(Component.literal("Bạn không có yêu cầu dịch nào từ " + targetPlayer.getPlainTextName() + ".").withStyle(TextFormatting.red()));
                 return 0;
             }
-            Teleport tp = req.getTeleport();
-            notifyCanceledTP(player.getServer(), tp);
+            notifyCanceledTP(player.level().getServer(), req.getTeleport());
             return 1;
+
         })));
 
-        // tpahere
-        dispatcher.register(Commands.literal("tpahere").requires(isPlayer).then(Commands.argument("target", GameProfileArgument.gameProfile()).executes(command -> {
-            ServerPlayer player = command.getSource().getPlayerOrException();
-            MinecraftServer server = player.getServer();
-            Collection<GameProfile> profiles = GameProfileArgument.getGameProfiles(command, "target");
-            if(profiles.size() > 1) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Chỉ gửi đến một đứa thôi!"));
-                return 0;
-            }
-            GameProfile profile = getFirstProfile(profiles);
-            if(!isGameProfileOnline(server, profile)) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Nó offline rồi!"));
-                return 0;
-            }
-            if(profile.getId().equals(player.getGameProfile().getId())) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "Không dịch chuyển đến chỗ mình được đâu!"));
-                return 0;
-            }
-            String sourceName = player.getName().getString();
-            ServerPlayer targetPlayer = server.getPlayerList().getPlayer(profile.getId());
-
-            HereTeleport tp = new HereTeleport(sourceName, targetPlayer.getName().getString());
-
-            Queue<TeleportRequest> queue = tps.computeIfAbsent(targetPlayer, k -> new ConcurrentLinkedQueue<>());
-            queue.add(new TeleportRequest(tp, getTeleportTimeout() * 20));
-
-            sendMessage(targetPlayer.createCommandSourceStack(), true, new FTC(ChatFormatting.GREEN, sourceName),
-                        new FTC(ChatFormatting.GOLD, " has requested that you teleport to them. Type "), new FTC(ChatFormatting.YELLOW, "/tpaccept"),
-                        new FTC(ChatFormatting.GOLD, " to accept or "), new FTC(ChatFormatting.YELLOW, "/tpadeny"), new FTC(ChatFormatting.GOLD, " to deny.\n"), 
-                        new Button("ACCEPT", "/tpaccept"), new FTC(ChatFormatting.WHITE, " || "), new Button("DENY", "/tpadeny"));
-            sendMessage(command.getSource(), true, new FTC(ChatFormatting.GOLD, "Requested "), new FTC(ChatFormatting.GREEN, targetPlayer.getName().getString()), new FTC(ChatFormatting.GOLD, " to teleport to you."));
-
-            return 1;
-        })));
-
-        // back
-        dispatcher.register(Commands.literal("back").requires(isPlayer).executes(command -> {
-            ServerPlayer player = command.getSource().getPlayerOrException();
-            MinecraftServer server = player.getServer();
-            PreviousPosition previousPos = PlayerData.getPreviousPosition(player);
-            if (previousPos == null) {
-                sendMessage(command.getSource(), false, new FTC(ChatFormatting.RED, "There is no previous position!"));
-                return 0;
-            }
-            PlayerData.setPreviousPosition(player, new PreviousPosition(player.getX(), player.getY(), player.getZ(), player.getLevel().dimension()));
-            player.teleportTo(server.getLevel(previousPos.getDimension()), previousPos.getX(), previousPos.getY(), previousPos.getZ(), player.yRot, 0F);
-            return 1;
-        }));
     }
 
-    @ExpectPlatform
     public static int getTeleportTimeout() {
-        throw new RuntimeException();
+        return Services.PLATFORM.getTeleportTimeout();
     }
 
-    private static boolean isGameProfileOnline(MinecraftServer server, GameProfile profile) {
-        ServerPlayer player = server.getPlayerList().getPlayer(profile.getId());
+    protected static boolean isGameProfileOnline(MinecraftServer server, NameAndId profile) {
+        ServerPlayer player = server.getPlayerList().getPlayer(profile.id());
         if(player != null) {
-            if(server.getPlayerList().getPlayers().contains(player)) {
-                return true;
-            }
+            return true;
         }
         return false;
     }
 
-    private static GameProfile getFirstProfile(Collection<GameProfile> profiles) {
-        for(GameProfile profile : profiles) {
+    protected static NameAndId getFirstProfile(Collection<NameAndId> profiles) {
+        for(NameAndId profile : profiles) {
             return profile;
         }
         return null;
@@ -278,7 +230,7 @@ public class QuickTeleportsMod {
 
     @Nullable
     public static TeleportRequest getSubjectTP(ServerPlayer player) {
-        Queue<TeleportRequest> queue = QuickTeleportsMod.tps.get(player);
+        Queue<TeleportRequest> queue = ForkedAtCommon.tps.get(player);
         if (queue == null || queue.isEmpty()) {
             return null;
         }
@@ -287,7 +239,7 @@ public class QuickTeleportsMod {
 
     @Nullable
     public static TeleportRequest getSubjectTP(ServerPlayer getter, ServerPlayer sender) {
-        Queue<TeleportRequest> queue = QuickTeleportsMod.tps.get(getter);
+        Queue<TeleportRequest> queue = ForkedAtCommon.tps.get(getter);
         TeleportRequest request = queue.stream()
                                         .filter(req -> req.getTeleport().getRequester().equals(sender.getName().getString()))
                                         .findFirst()
@@ -301,8 +253,8 @@ public class QuickTeleportsMod {
     }
 
     public static void serverTick(MinecraftServer server) {
-        for (ServerPlayer player : QuickTeleportsMod.tps.keySet()) {
-            Queue<TeleportRequest> queue = QuickTeleportsMod.tps.get(player);
+        for (ServerPlayer player : ForkedAtCommon.tps.keySet()) {
+            Queue<TeleportRequest> queue = ForkedAtCommon.tps.get(player);
             Iterator<TeleportRequest> it = queue.iterator();
             while (it.hasNext()) {
                 TeleportRequest req = it.next();
@@ -319,10 +271,20 @@ public class QuickTeleportsMod {
         ServerPlayer tper = server.getPlayerList().getPlayerByName(tp.getRequester());
         ServerPlayer target = server.getPlayerList().getPlayerByName(tp.getSubject());
         if(target != null) {
-            sendMessage(target.createCommandSourceStack(), true, new FTC(ChatFormatting.GOLD, "Teleport request from "), new FTC(ChatFormatting.GREEN, tp.getRequester()), new FTC(ChatFormatting.GOLD, " timed out."));
+            target.createCommandSourceStack().sendSuccess(
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                            "Yêu cầu dịch chuyển từ ", TextFormatting.gold(),
+                                                tp.getRequester(), TextFormatting.green(),
+                                                " đã quá hạn.", TextFormatting.gold()
+                ))), false);
         }
         if(tper != null) {
-            sendMessage(tper.createCommandSourceStack(), true, new FTC(ChatFormatting.GOLD, "Your request to "), new FTC(ChatFormatting.GREEN, tp.getSubject()), new FTC(ChatFormatting.GOLD, " has timed out after not being accepted."));
+            tper.createCommandSourceStack().sendSuccess(
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                            "Your request to ", TextFormatting.gold(),
+                                                tp.getSubject(), TextFormatting.green(),
+                                                " has timed out after not being accepted.", TextFormatting.gold()
+                ))), false);
         }
     }
 
@@ -330,27 +292,20 @@ public class QuickTeleportsMod {
         ServerPlayer tper = server.getPlayerList().getPlayerByName(tp.getRequester());
         ServerPlayer target = server.getPlayerList().getPlayerByName(tp.getSubject());
         if(target != null) {
-            sendMessage(target.createCommandSourceStack(), true, new FTC(ChatFormatting.GOLD, "Teleport request from "), new FTC(ChatFormatting.GREEN, tp.getRequester()), new FTC(ChatFormatting.GOLD, " has been denied."));
+            target.createCommandSourceStack().sendSuccess(
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                            "Yêu cầu dịch chuyển của ", TextFormatting.gold(),
+                                                tp.getRequester(), TextFormatting.green(),
+                                                " đã bị từ chối.", TextFormatting.gold()
+                ))), false);
         }
         if(tper != null) {
-            sendMessage(tper.createCommandSourceStack(), true, new FTC(ChatFormatting.GOLD, "Your request to "), new FTC(ChatFormatting.GREEN, tp.getSubject()), new FTC(ChatFormatting.GOLD, " has been denied."));
+            tper.createCommandSourceStack().sendSuccess(
+                    () -> TextFormatting.longText(Maps.newLinkedHashMap(ImmutableMap.of(
+                                                "Yêu cầu dịch chuyển đến ",TextFormatting.gold(),
+                                                tp.getSubject(), TextFormatting.green(),
+                                                " đã bị từ chối.", TextFormatting.gold()
+                ))), false);
         }
     }
-
-    public static void sendMessage(CommandSourceStack source, boolean success, TextComponent... styled) {
-        if(styled.length > 0) {
-            TextComponent comp = styled[0];
-            if(styled.length > 1) {
-                for(int i = 1; i < styled.length; i++) {
-                    comp.append(styled[i]);
-                }
-            }
-            if(success) {
-                source.sendSuccess(comp, false);
-            } else {
-                source.sendFailure(comp);
-            }
-        }
-    }
-
 }
