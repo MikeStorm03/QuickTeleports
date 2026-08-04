@@ -46,7 +46,7 @@ public class ForkedAtCommon extends QuickTeleportsMod {
                 return 0;
             }
             if(profile.id().equals(player.getGameProfile().id())) {
-                sourceStack.sendFailure(TextFormatting.shortText("Không dịch chuyển đến chỗ mình được đâu!", TextFormatting.red()));
+                sourceStack.sendFailure(TextFormatting.shortText("Không dịch chuyển đến chỗ bản thân được đâu!", TextFormatting.red()));
                 return 0;
             }
             String sourceName = player.getName().getString();
